@@ -1,15 +1,22 @@
 <?php
-/*
-Plugin Name: BVI Share a Draft
-Plugin URI: https://github.com/bigvoodoo/bvi-shareadraft
-Description: Share private preview links to your drafts
-Author: Big Voodoo Interactive
-Version: 2.0.0
-Author URI: https://www.bigvoodoo.com
-Text Domain: bvi-shareadraft
-Domain Path: /languages
-GitHub Plugin URI: https://github.com/bigvoodoo/bvi-shareadraft
-*/
+
+/**
+ * Plugin Name:       BVI Share a Draft
+ * Plugin URI:        https://github.com/bigvoodoo/bvi-shareadraft
+ * Author:            Big Voodoo Interactive
+ * Author URI:        https://www.bigvoodoo.com
+ * Description:       Share private preview links to your drafts.
+ * Version:           2.0.1
+ * Requires at least: 6.9
+ * Tested up to:      7.0
+ * Requires PHP:      8.2
+ * License:           GPLv3
+ * License URI:       https://www.gnu.org/licenses/gpl-3.0.html
+ * GitHub Update URI: https://github.com/bigvoodoo/bvi-shareadraft
+ * Primary Branch:    main
+ * Text Domain:       bvi-shareadraft
+ * Domain Path:       /languages
+ */
 
 if ( ! class_exists( 'Share_a_Draft' ) ) :
 	class Share_a_Draft {

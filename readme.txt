@@ -1,11 +1,12 @@
 === Share a Draft ===
-Contributors: nbachiyski, automattic
+Contributors: bigvoodoo, geekmenina
 Tags: post, post, draft, posts, drafts, share, sharing
-Requires at least: 4.0
-Tested up to: 4.8
+Requires at least: 6.9
+Tested up to: 7.0
+Requires PHP: 8.2
 Stable tag: trunk
 
-Share private preview links to your drafts
+Share private preview links to your drafts.
 
 == Description ==
 
@@ -33,20 +34,11 @@ e.g.
 
 == Changelog ==
 
-= 1.5 =
-* Test with newest WordPress versions
-* Update copy
-* Removed seconds as a granularity level
-* Light cleanup of the almost 10-year old code
+= 2.0.1 =
 
-= 1.4 =
-* Included your own scheduled posts to the list
-* The link is now a real link
-* Dropped PHP4 support
-* Internal improvements
-* Italian translation thanks to gidibao's Cafe (http://gidibao.net/)
-* French translation thanks to Nicolas Brisebois-Tetreault
+* Tests up to WordPress 7.0
 
-= 1.3 =
-* Fix draft links for installs where WordPress URL is different from website URL
+= 2.0.0 =
+
+* Ports original, no longer maintained, Automattic version of plugin.
 
