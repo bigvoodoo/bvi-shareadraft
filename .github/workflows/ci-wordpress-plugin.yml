@@ -1,0 +1,155 @@
+name: WordPress Plugin Checks
+
+on:
+  push:
+    branches: ['*']
+  pull_request:
+    branches: ['*']
+
+jobs:
+  # ─── Project Config (bvi.json) ─────────────────────────────────────
+  config:
+    name: Read Project Config
+    runs-on: ubuntu-latest
+    outputs:
+      project_dir: ${{ steps.read.outputs.project_dir }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Read bvi.json
+        id: read
+        run: |
+          if [ ! -f "bvi.json" ]; then
+            echo "::notice::No bvi.json found — assuming the plugin lives at the repo root. Run 'npm run setup:ci' to generate one."
+            echo "project_dir=." >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! jq -e . bvi.json > /dev/null 2>&1; then
+            echo "::error::bvi.json is not valid JSON. Fix it or re-run 'npm run setup:ci' at the repo root."
+            exit 1
+          fi
+          TYPE=$(jq -r '.type // empty' bvi.json)
+          DIR=$(jq -r '.path // empty' bvi.json)
+          if [ -z "$DIR" ]; then
+            echo "::error::bvi.json is missing the \"path\" field. Re-run 'npm run setup:ci' at the repo root."
+            exit 1
+          fi
+          if [ ! -d "$DIR" ]; then
+            echo "::error::bvi.json points at \"$DIR\" but that directory does not exist. Was the plugin moved or renamed? Re-run 'npm run setup:ci' or fix the \"path\" value."
+            exit 1
+          fi
+          if [ "$TYPE" != "plugin" ]; then
+            echo "::error::bvi.json says type \"$TYPE\" but this repository runs the plugin workflow. Set \"type\": \"plugin\" in bvi.json, or use ci-wordpress-theme.yml instead."
+            exit 1
+          fi
+          if ! grep -qli 'Plugin Name:' "$DIR"/*.php 2>/dev/null; then
+            echo "::error::No PHP file with a 'Plugin Name:' header found in \"$DIR\" — that is not a plugin directory. Re-run 'npm run setup:ci' at the repo root."
+            exit 1
+          fi
+          echo "Using plugin directory: $DIR"
+          echo "project_dir=$DIR" >> "$GITHUB_OUTPUT"
+
+  agnostic:
+    name: Agnostic Checks
+    needs: config
+    uses: ./.github/workflows/ci-wordpress.yml
+    with:
+      project_dir: ${{ needs.config.outputs.project_dir }}
+
+  # ─── Plugin-Specific File Checks ───────────────────────────────────
+  plugin-files:
+    name: Plugin Files
+    runs-on: ubuntu-latest
+    needs: [config, agnostic]
+    defaults:
+      run:
+        working-directory: ${{ needs.config.outputs.project_dir }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Verify required plugin files exist
+        run: |
+          echo "=== Required Plugin Files ==="
+          MISSING=0
+
+          # find main plugin file (php file with Plugin Name header in root)
+          MAIN_FILE=$(grep -rl 'Plugin Name:' *.php 2>/dev/null | head -1)
+          if [ -n "$MAIN_FILE" ]; then
+            echo "  [PASS] Main plugin file: $MAIN_FILE"
+          else
+            echo "  [FAIL] No main plugin file with 'Plugin Name:' header found in root."
+            MISSING=1
+          fi
+
+          # composer-based (psr-4) plugins must boot through src/Main.php;
+          # legacy plugins without composer.json are only warned until they are modernised
+          if [ -f "composer.json" ]; then
+            echo "  [PASS] composer.json"
+            if [ -f "src/Main.php" ]; then
+              echo "  [PASS] src/Main.php"
+            else
+              echo "  [FAIL] src/Main.php is missing! Composer-based plugins must boot through src/Main.php."
+              MISSING=1
+            fi
+          else
+            echo "  [WARN] composer.json not found — legacy plugin layout, src/Main.php not required."
+          fi
+
+          # check recommended structure
+          echo ""
+          echo "=== Plugin Structure ==="
+          DIRS=("src" "assets/src" "templates")
+          for d in "${DIRS[@]}"; do
+            if [ -d "$d" ]; then
+              COUNT=$(find "$d" -type f | wc -l)
+              echo "  [PASS] $d/ ($COUNT files)"
+            else
+              echo "  [WARN] $d/ directory not found"
+            fi
+          done
+
+          if [ $MISSING -eq 1 ]; then
+            echo ""
+            echo "ERROR: Required files are missing!"
+            exit 1
+          fi
+
+      - name: Validate plugin file header
+        run: |
+          echo "=== Plugin File Header ==="
+          MAIN_FILE=$(grep -rl 'Plugin Name:' *.php 2>/dev/null | head -1)
+          if [ -z "$MAIN_FILE" ]; then
+            echo "  [FAIL] No main plugin file found."
+            exit 1
+          fi
+
+          HEADERS=("Plugin Name" "Version" "Requires at least" "Tested up to" "Requires PHP" "Author" "Author URI" "License" "License URI" "Text Domain" "GitHub Plugin URI" "Primary Branch")
+          for header in "${HEADERS[@]}"; do
+            VALUE=$(grep -i "^[[:space:]]*\*\?[[:space:]]*${header}:" "$MAIN_FILE" | head -1)
+            if [ -n "$VALUE" ]; then
+              echo "  [PASS] $VALUE"
+            else
+              echo "  [WARN] Missing header: $header"
+            fi
+          done
+
+          # verify bvi standards
+          echo ""
+          echo "=== BVI Header Standards ==="
+          if grep -q 'Author:.*Big Voodoo Interactive' "$MAIN_FILE"; then
+            echo "  [PASS] Author is Big Voodoo Interactive"
+          else
+            echo "  [WARN] Author should be 'Big Voodoo Interactive'"
+          fi
+
+          if grep -qE 'License:.*(GPLv3|GPL-3\.0-or-later)' "$MAIN_FILE"; then
+            echo "  [PASS] License is GPLv3 / GPL-3.0-or-later"
+          else
+            echo "  [WARN] License should be GPLv3 or GPL-3.0-or-later"
+          fi
+
+          if grep -q '@package' "$MAIN_FILE"; then
+            echo "  [PASS] @package tag present"
+          else
+            echo "  [WARN] Missing @package tag"
+          fi

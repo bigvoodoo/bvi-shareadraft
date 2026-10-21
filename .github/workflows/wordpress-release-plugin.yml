@@ -1,0 +1,247 @@
+name: Build Plugin ZIP
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., 0.3.0)'
+        required: false
+        type: string
+
+# the GITHUB_TOKEN defaults to read-only on newer repos; attaching the zip to
+# the release (softprops/action-gh-release) needs write access to contents
+permissions:
+  contents: write
+
+# Plugin lives at the repo root. Set to the plugin subdirectory
+# if the plugin is nested inside the repo.
+defaults:
+  run:
+    working-directory: '.'
+
+jobs:
+  build:
+    name: Build Plugin ZIP
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # the zip's top-level folder is the directory wordpress installs into, so it must
+      # match the plugin's public slug. defaults to the repository name; set "slug" in
+      # bvi.json when they differ (e.g. a wordpress.org listing under a shorter name)
+      - name: Determine plugin slug
+        id: slug
+        run: |
+          SLUG=""
+          if [ -f bvi.json ]; then
+            SLUG=$(jq -r '.slug // empty' bvi.json)
+          fi
+          SLUG="${SLUG:-${GITHUB_REPOSITORY#*/}}"
+          if ! [[ "$SLUG" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+            echo "::error::Invalid plugin slug: $SLUG (lowercase letters, digits and hyphens only)"
+            exit 1
+          fi
+          echo "Plugin slug: $SLUG"
+          echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          tools: composer:v2
+
+      # legacy plugins without composer.json ship no vendor/ tree
+      - name: Install Composer dependencies (production)
+        run: |
+          if [ ! -f composer.json ]; then
+            echo "No composer.json found, skipping."
+            exit 0
+          fi
+          composer install --no-dev --prefer-dist --no-progress --optimize-autoloader
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # install scripts must run: esbuild/sharp need their postinstall
+      # binaries or the gulp build fails and the zip ships without assets
+      - name: Install npm dependencies
+        run: |
+          if [ ! -f package.json ]; then
+            echo "No package.json found, skipping."
+            exit 0
+          fi
+          if [ -f package-lock.json ]; then
+            npm ci --no-audit --no-fund
+          else
+            npm install --no-audit --no-fund
+          fi
+
+      - name: Build assets
+        run: |
+          if [ ! -f package.json ] || ! jq -e '.scripts.build' package.json > /dev/null 2>&1; then
+            echo "No build script in package.json, skipping."
+            exit 0
+          fi
+          npm run build
+          if [ -d assets/src/blocks ] && jq -e '.scripts["block:build"]' package.json > /dev/null; then
+            npm run block:build
+          fi
+
+      - name: Determine version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          HEADER_FILE=$(grep -lE '^[[:space:]]*\*?[[:space:]]*Plugin Name:' ./*.php | head -1 || true)
+          HEADER_VERSION=$(grep -m1 -oP '^[[:space:]]*\*?[[:space:]]*Version:\s*\K\S+' "${HEADER_FILE:-/dev/null}" || true)
+          if [ -z "$HEADER_VERSION" ]; then
+            echo "::error::Could not read the Version header from the plugin main file"
+            exit 1
+          fi
+          TAG="${INPUT_VERSION:-${RELEASE_TAG:-$HEADER_VERSION}}"
+          if ! [[ "$TAG" =~ ^v?[0-9][0-9A-Za-z.-]*$ ]]; then
+            echo "::error::Invalid version tag: $TAG"
+            exit 1
+          fi
+          # guard against packaging the wrong build - update the header before tagging
+          if [ "${TAG#v}" != "$HEADER_VERSION" ]; then
+            echo "::error::Version mismatch: tag '$TAG' but ${HEADER_FILE#./} says '$HEADER_VERSION'"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Create plugin ZIP
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          PLUGIN_SLUG: ${{ steps.slug.outputs.slug }}
+        run: |
+          BUILD_DIR="/tmp/${PLUGIN_SLUG}"
+
+          mkdir -p "${BUILD_DIR}"
+
+          # copy plugin files - unanchored patterns match at any depth (covers vendor packages),
+          # leading / anchors to the project root. keep in sync with rules/release-zip.md
+          rsync -a --exclude-from=- . "${BUILD_DIR}/" <<'EOF'
+          # version control, ci, and ai tooling - unanchored so vendor packages are covered too
+          .git
+          .github
+          .gitlab
+          .circleci
+          .claude
+          .gitignore
+          .gitattributes
+          .gitmodules
+          .editorconfig
+          # tests and test/analysis config - unanchored so vendor packages are covered too
+          tests
+          Tests
+          .phpunit.cache
+          .phpunit.result.cache
+          phpunit.xml
+          phpunit.xml.dist
+          phpstan.neon
+          phpstan.neon.dist
+          psalm.xml
+          psalm.xml.dist
+          infection.json
+          infection.json.dist
+          .php-cs-fixer.php
+          .php-cs-fixer.dist.php
+          .php_cs
+          .php_cs.dist
+          .travis.yml
+          .scrutinizer.yml
+          .styleci.yml
+          appveyor.yml
+          Makefile
+          # junk - unanchored
+          node_modules
+          .DS_Store
+          Thumbs.db
+          *.md
+          *.zip
+          *.log
+          # composer package dev dirs - package root only, a project's own build/ or docs/ may be legitimate
+          /vendor/bin
+          /vendor/*/*/docs
+          /vendor/*/*/doc
+          /vendor/*/*/examples
+          /vendor/*/*/example
+          /vendor/*/*/build
+          /vendor/*/*/benchmarks
+          # project-root dev config - anchored so nested files with the same name are untouched.
+          # composer.json + composer.lock are NOT excluded: they ship beside vendor/ (wordpress.org
+          # review requires the manifest for bundled dependencies)
+          /assets/src
+          /bvi.json
+          /bvi-run.js
+          /.distignore
+          /vitest.config.mjs
+          /vitest.config.mts
+          /playwright.config.mjs
+          *.test.js
+          /.env
+          /.env.*
+          /phpcs.xml
+          /phpcs.xml.dist
+          /.phpcs.xml
+          /.phpcs.xml.dist
+          /eslint.config.js
+          /eslint.config.mjs
+          /.eslintrc
+          /.eslintrc.*
+          /.prettierrc
+          /.prettierrc.*
+          /.prettierignore
+          /.stylelintrc
+          /.stylelintrc.*
+          /gulpfile.js
+          /gulpfile.mjs
+          /webpack.config.js
+          /tsconfig.json
+          /package.json
+          /package-lock.json
+          /Docker
+          /docker-compose.yml
+          /docker-compose.*.yml
+          EOF
+
+          # fail if anything dev-only slipped through (vendor packages included)
+          LEAKS=$(cd "${BUILD_DIR}" && find . \( -name '.git*' -o -name '.claude' -o -name 'node_modules' \
+              -o -iname 'tests' -o -name '.env' -o -name '.env.*' -o -name 'phpunit.xml*' -o -name 'phpstan.neon*' \
+              -o -name '*.md' -o -name '*.zip' \) -print | sed 's#^\./##')
+          if [ -f composer.lock ]; then
+            while IFS= read -r pkg; do
+              if [ -n "${pkg}" ] && [ -d "${BUILD_DIR}/vendor/${pkg}" ]; then
+                LEAKS="${LEAKS}${LEAKS:+$'\n'}vendor/${pkg} (dev dependency)"
+              fi
+            done < <(jq -r '.["packages-dev"][]?.name' composer.lock)
+          fi
+          if [ -n "${LEAKS}" ]; then
+            echo "::error::Dev-only files found in release tree:"
+            echo "${LEAKS}"
+            exit 1
+          fi
+
+          cd /tmp
+          zip -r "${GITHUB_WORKSPACE}/${PLUGIN_SLUG}-${TAG}.zip" "${PLUGIN_SLUG}/"
+
+      - name: Upload ZIP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.slug.outputs.slug }}-${{ steps.version.outputs.tag }}
+          path: ${{ steps.slug.outputs.slug }}-*.zip
+          retention-days: 90
+
+      - name: Attach ZIP to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.slug.outputs.slug }}-*.zip

@@ -4,8 +4,11 @@ Plugin Name: BVI Share a Draft
 Plugin URI: https://github.com/bigvoodoo/bvi-shareadraft
 Description: Share private preview links to your drafts
 Author: Big Voodoo Interactive
-Version: 2.0.0
+Version: 2.0.1
+Tested up to: 7.1.3
 Author URI: https://www.bigvoodoo.com
+License: GPLv2 or later
+License URI: https://www.gnu.org/licenses/gpl-2.0.html
 Text Domain: bvi-shareadraft
 Domain Path: /languages
 GitHub Plugin URI: https://github.com/bigvoodoo/bvi-shareadraft

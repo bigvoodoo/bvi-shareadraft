@@ -2,8 +2,10 @@
 Contributors: nbachiyski, automattic
 Tags: post, post, draft, posts, drafts, share, sharing
 Requires at least: 4.0
-Tested up to: 4.8
+Tested up to: 7.1.3
 Stable tag: trunk
+License: GPLv2 or later
+License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
 Share private preview links to your drafts
 
@@ -32,6 +34,9 @@ e.g.
 
 
 == Changelog ==
+
+= 2.0.1 =
+* Tests against WordPress 7.1.3 and PHP 8.5
 
 = 1.5 =
 * Test with newest WordPress versions
